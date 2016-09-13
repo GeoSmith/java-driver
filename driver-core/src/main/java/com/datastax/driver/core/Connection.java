@@ -1316,7 +1316,6 @@ class Connection {
 
 //            pipeline.addLast("debug", new LoggingHandler(LogLevel.INFO));
 
-            pipeline.addLast("frameDecoder", new Frame.Decoder(protocolVersion.toInt()));
             pipeline.addLast("frameDecoder", new Frame.Decoder());
             pipeline.addLast("frameEncoder", frameEncoder);
 
