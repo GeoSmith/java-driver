@@ -22,6 +22,7 @@ import com.datastax.driver.core.schemabuilder.SchemaBuilder;
 import org.apache.log4j.Level;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
 import java.nio.ByteBuffer;
@@ -36,11 +37,6 @@ import static org.assertj.core.api.Fail.fail;
 @CCMConfig(numberOfNodes = 2)
 public class FrameLengthTest extends CCMTestsSupport {
 
-    static {
-        // Set max frame size to 1MB to make it easier to manifest frame length error.
-        System.setProperty("com.datastax.driver.NATIVE_TRANSPORT_MAX_FRAME_SIZE_IN_MB", "1");
-    }
-
     Logger logger = LoggerFactory.getLogger(FrameLengthTest.class);
 
     private static final String tableName = "blob_table";
@@ -48,6 +44,13 @@ public class FrameLengthTest extends CCMTestsSupport {
     private static final int rowsPerPartitionCount = 4;
     private static final int partitionCount = 1;
     private static final int bytesPerCol = 1024;
+
+    @BeforeClass(groups = {"isolated"})
+    public void beforeTestClass() throws Exception {
+        // Set max frame size to 1MB to make it easier to manifest frame length error.
+        System.setProperty("com.datastax.driver.NATIVE_TRANSPORT_MAX_FRAME_SIZE_IN_MB", "1");
+        super.beforeTestClass();
+    }
 
     @Override
     public void onTestContextInitialized() {
