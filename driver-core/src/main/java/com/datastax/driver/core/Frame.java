@@ -189,8 +189,13 @@ class Frame {
     }
 
     static final class Decoder extends ByteToMessageDecoder {
-        static final DecoderForStreamIdSize decoderV1 = new DecoderForStreamIdSize(1);
-        static final DecoderForStreamIdSize decoderV3 = new DecoderForStreamIdSize(2);
+        final int protocolVersion;
+        final DecoderForStreamIdSize decoderForStreamIdSize;
+
+        Decoder(int protocolVersion) {
+            this.protocolVersion = protocolVersion;
+            this.decoderForStreamIdSize = new DecoderForStreamIdSize(protocolVersion >= 3 ? 2 : 1);
+        }
 
         @Override
         protected void decode(ChannelHandlerContext ctx, ByteBuf buffer, List<Object> out) throws Exception {
@@ -200,15 +205,17 @@ class Frame {
             int version = buffer.getByte(0);
             // version first bit is the "direction" of the frame (request or response)
             version = version & 0x7F;
+            // the version in the message should match the version this Decoder is configured for.
+            assert version == protocolVersion;
 
-            DecoderForStreamIdSize decoder = (version >= 3) ? decoderV3 : decoderV1;
-            Object frame = decoder.decode(ctx, buffer);
+            Object frame = decoderForStreamIdSize.decode(ctx, buffer);
             if (frame != null)
                 out.add(frame);
         }
 
         static class DecoderForStreamIdSize extends LengthFieldBasedFrameDecoder {
-            private static final int MAX_FRAME_LENGTH = 256 * 1024 * 1024; // 256 MB
+            // The maximum response frame length allowed.  Note that C* does not currently restrict the length of its responses (CASSANDRA-12630).
+            private static final int MAX_FRAME_LENGTH = SystemProperties.getInt("com.datastax.driver.NATIVE_TRANSPORT_MAX_FRAME_SIZE_IN_MB", 256) * 1024 * 1024; // 256 MB
             private final int opcodeOffset;
 
             DecoderForStreamIdSize(int streamIdSize) {

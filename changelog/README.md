@@ -8,6 +8,8 @@
 - [bug] JAVA-1101: Batch and BatchStatement should consider inner statements to determine query idempotence
 - [improvement] JAVA-1262: Use ParseUtils for quoting & unquoting.
 - [improvement] JAVA-1275: Use Netty's default thread factory
+- [bug] JAVA-1292: 'Adjusted frame length' error breaks driver's ability to read data.
+- [improvement] JAVA-1293: Make DecoderForStreamIdSize.MAX_FRAME_LENGTH configurable.
 
 
 ### 3.0.3
