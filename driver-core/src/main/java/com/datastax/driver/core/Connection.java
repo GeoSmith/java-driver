@@ -27,6 +27,7 @@ import io.netty.channel.*;
 import io.netty.channel.group.ChannelGroup;
 import io.netty.channel.group.DefaultChannelGroup;
 import io.netty.channel.socket.SocketChannel;
+import io.netty.handler.codec.DecoderException;
 import io.netty.handler.timeout.IdleStateEvent;
 import io.netty.handler.timeout.IdleStateHandler;
 import io.netty.util.Timeout;
@@ -993,7 +994,7 @@ class Connection {
             ResponseHandler handler = pending.remove(streamId);
             streamIdHandler.release(streamId);
             if (handler == null) {
-                /**
+                /*
                  * During normal operation, we should not receive responses for which we don't have a handler. There is
                  * two cases however where this can happen:
                  *   1) The connection has been defuncted due to some internal error and we've raced between removing the
@@ -1001,6 +1002,7 @@ class Connection {
                  *      ignoring this completely.
                  *   2) This request has timed out. In that case, we've already switched to another host (or errored out
                  *      to the user). So log it for debugging purpose, but it's fine ignoring otherwise.
+                 *   3) The connection encountered a frame too large to process.
                  */
                 streamIdHandler.unmark(streamId);
                 if (logger.isDebugEnabled())
@@ -1046,6 +1048,27 @@ class Connection {
             if (writer.get() > 0)
                 return;
 
+            if (cause instanceof DecoderException) {
+                Throwable error = cause.getCause();
+                // Special case, if we encountered a TooLongFrameException, raise exception on handler and don't defunct it since
+                // the connection is in an ok state.
+                if (error != null && error instanceof TooLongFrameException) {
+                    TooLongFrameException tlfe = (TooLongFrameException) error;
+                    int streamId = tlfe.getStreamId();
+                    ResponseHandler handler = pending.remove(streamId);
+                    streamIdHandler.release(streamId);
+                    if (handler == null) {
+                        streamIdHandler.unmark(streamId);
+                        if (logger.isDebugEnabled())
+                            logger.debug("{} TooLongFrameException received on stream {} but no handler set anymore (either the request has "
+                                    + "timed out or it was closed due to another error).", Connection.this, streamId);
+                        return;
+                    }
+                    handler.cancelTimeout();
+                    handler.callback.onException(Connection.this, tlfe, System.nanoTime() - handler.startTime, handler.retryCount);
+                    return;
+                }
+            }
             defunct(new TransportException(address, String.format("Unexpected exception triggered (%s)", cause), cause));
         }
 

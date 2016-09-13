@@ -15,21 +15,19 @@
  */
 package com.datastax.driver.core;
 
-import com.datastax.driver.core.exceptions.NoHostAvailableException;
+import com.datastax.driver.core.exceptions.TooLongFrameException;
 import com.datastax.driver.core.querybuilder.Insert;
 import com.datastax.driver.core.schemabuilder.Create;
 import com.datastax.driver.core.schemabuilder.SchemaBuilder;
-import org.apache.log4j.Level;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
 import java.nio.ByteBuffer;
+import java.util.Collection;
 import java.util.Random;
 
-import static com.datastax.driver.core.TestUtils.ipOfNode;
-import static com.datastax.driver.core.TestUtils.waitForUp;
 import static com.datastax.driver.core.querybuilder.QueryBuilder.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Fail.fail;
@@ -103,29 +101,22 @@ public class FrameLengthTest extends CCMTestsSupport {
     @Test(groups = "isolated")
     public void should_throw_exception_when_frame_exceeds_configured_max() {
         // Capture the connection logger to check for TooLongFrameException.
-        org.apache.log4j.Logger connectionLogger = org.apache.log4j.Logger.getLogger(Connection.class);
-        Level originalLevel = connectionLogger.getLevel();
-        connectionLogger.setLevel(Level.DEBUG);
-        MemoryAppender logs = new MemoryAppender();
-        connectionLogger.addAppender(logs);
         try {
             session().execute(select().from(tableName).where(eq("k", 0)));
             fail("Exception expected");
-        } catch (NoHostAvailableException e) {
-            // Both hosts should have been tried.
-            assertThat(e.getErrors()).hasSize(2);
-        } finally {
-            // Check that TooLongFrameException is encountered as it isn't raised to the NoHostAvailableException.
-            assertThat(logs.get()).contains("io.netty.handler.codec.TooLongFrameException");
-            connectionLogger.setLevel(originalLevel);
-            connectionLogger.removeAppender(logs);
+        } catch (TooLongFrameException tlfe) {
+            // Expected.
         }
-        // Connection will be lost for both hosts, but they should be able to reconnect.
-        waitForUp(ipOfNode(1), cluster(), 10);
-        waitForUp(ipOfNode(2), cluster(), 10);
+
+        // Both hosts should remain up.
+        Collection<Host> hosts = session().getState().getConnectedHosts();
+        assertThat(hosts).hasSize(2).extractingResultOf("isUp").containsOnly(true);
 
         // Should be able to make a query that is less than the max frame size.
-        ResultSet result = session().execute(select().from(tableName).where(eq("k", 0)).and(eq("c", 0)));
-        assertThat(result.getAvailableWithoutFetching()).isEqualTo(1);
+        // Execute multiple time to exercise all hosts.
+        for (int i = 0; i < 10; i++) {
+            ResultSet result = session().execute(select().from(tableName).where(eq("k", 0)).and(eq("c", 0)));
+            assertThat(result.getAvailableWithoutFetching()).isEqualTo(1);
+        }
     }
 }

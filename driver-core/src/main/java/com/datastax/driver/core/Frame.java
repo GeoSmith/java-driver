@@ -16,6 +16,7 @@
 package com.datastax.driver.core;
 
 import com.datastax.driver.core.exceptions.DriverInternalError;
+import com.datastax.driver.core.exceptions.TooLongFrameException;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
@@ -23,7 +24,6 @@ import io.netty.handler.codec.*;
 
 import java.util.EnumSet;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * A frame for the CQL binary protocol.
@@ -102,6 +102,16 @@ class Frame {
 
         Header header = new Header(version, flags, streamId, opcode);
         return new Frame(header, fullFrame);
+    }
+
+    private static int getStreamId(ByteBuf fullFrame, int version) {
+        switch (version) {
+            case 1:
+            case 2:
+                return fullFrame.getByte(2);
+            default:
+                return fullFrame.getShort(2);
+        }
     }
 
     private static int readStreamid(ByteBuf fullFrame, ProtocolVersion version) {
@@ -190,27 +200,21 @@ class Frame {
     }
 
     static final class Decoder extends ByteToMessageDecoder {
-        final AtomicReference<DecoderForStreamIdSize> decoderForStreamIdSize = new AtomicReference<DecoderForStreamIdSize>();
+        private DecoderForStreamIdSize decoder;
 
         @Override
         protected void decode(ChannelHandlerContext ctx, ByteBuf buffer, List<Object> out) throws Exception {
             if (buffer.readableBytes() < 1)
                 return;
 
-            int version = buffer.getByte(0);
-            // version first bit is the "direction" of the frame (request or response)
-            version = version & 0x7F;
-
-            DecoderForStreamIdSize decoder = decoderForStreamIdSize.get();
+            // Initialize sub decoder on first message.  No synchronization needed as
+            // decode is always called from same thread.
             if (decoder == null) {
+                int version = buffer.getByte(0);
+                // version first bit is the "direction" of the frame (request or response)
+                version = version & 0x7F;
                 decoder = new DecoderForStreamIdSize(version, version >= 3 ? 2 : 1);
-                if (!decoderForStreamIdSize.compareAndSet(null, decoder)) {
-                    decoder = decoderForStreamIdSize.get();
-                }
             }
-
-            // the version in the message should match the version this Decoder is configured for.
-            assert decoder.protocolVersion == version;
 
             Object frame = decoder.decode(ctx, buffer);
             if (frame != null)
@@ -232,12 +236,6 @@ class Frame {
             @Override
             protected Object decode(ChannelHandlerContext ctx, ByteBuf buffer) throws Exception {
                 try {
-                    if (buffer.readableBytes() < opcodeOffset + 1)
-                        return null;
-
-                    // Validate the opcode (this will throw if it's not a response)
-                    Message.Response.Type.fromOpcode(buffer.getByte(opcodeOffset));
-
                     ByteBuf frame = (ByteBuf) super.decode(ctx, buffer);
                     if (frame == null) {
                         return null;
@@ -245,11 +243,15 @@ class Frame {
                     // Do not deallocate `frame` just yet, because it is stored as Frame.body and will be used
                     // in Message.ProtocolDecoder or Frame.Decompressor if compression is enabled (we deallocate
                     // it there).
-                    return Frame.create(frame);
+                    Frame theFrame = Frame.create(frame);
+                    // Validate the opcode (this will throw if it's not a response)
+                    Message.Response.Type.fromOpcode(theFrame.header.opcode);
+                    return theFrame;
                 } catch (CorruptedFrameException e) {
                     throw new DriverInternalError(e);
-                } catch (TooLongFrameException e) {
-                    throw new DriverInternalError(e);
+                } catch (io.netty.handler.codec.TooLongFrameException e) {
+                    int streamId = Frame.getStreamId(buffer, protocolVersion);
+                    throw new TooLongFrameException(streamId, e);
                 }
             }
         }
