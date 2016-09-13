@@ -203,8 +203,10 @@ class Frame {
 
             DecoderForStreamIdSize decoder = decoderForStreamIdSize.get();
             if (decoder == null) {
-                decoderForStreamIdSize.compareAndSet(null, new DecoderForStreamIdSize(version, version >= 3 ? 2 : 1));
-                decoder = decoderForStreamIdSize.get();
+                decoder = new DecoderForStreamIdSize(version, version >= 3 ? 2 : 1);
+                if (!decoderForStreamIdSize.compareAndSet(null, decoder)) {
+                    decoder = decoderForStreamIdSize.get();
+                }
             }
 
             // the version in the message should match the version this Decoder is configured for.
