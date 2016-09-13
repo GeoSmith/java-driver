@@ -18,8 +18,8 @@ package com.datastax.driver.core.exceptions;
 /**
  * Indicates that the response frame for a request exceeded
  * {@link com.datastax.driver.core.Frame.Decoder.DecoderForStreamIdSize#MAX_FRAME_LENGTH}
- * (default: 256MB, configurable via com.datastax.driver.NATIVE_TRANSPORT_MAX_FRAME_SIZE_IN_MB)
- * and thus was not parsed.
+ * (default: 256MB, configurable via com.datastax.driver.NATIVE_TRANSPORT_MAX_FRAME_SIZE_IN_MB
+ * system property) and thus was not parsed.
  */
 public class TooLongFrameException extends DriverException {
 
