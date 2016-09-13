@@ -23,6 +23,7 @@ import io.netty.handler.codec.*;
 
 import java.util.EnumSet;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * A frame for the CQL binary protocol.
@@ -189,13 +190,7 @@ class Frame {
     }
 
     static final class Decoder extends ByteToMessageDecoder {
-        final int protocolVersion;
-        final DecoderForStreamIdSize decoderForStreamIdSize;
-
-        Decoder(int protocolVersion) {
-            this.protocolVersion = protocolVersion;
-            this.decoderForStreamIdSize = new DecoderForStreamIdSize(protocolVersion >= 3 ? 2 : 1);
-        }
+        final AtomicReference<DecoderForStreamIdSize> decoderForStreamIdSize = new AtomicReference<DecoderForStreamIdSize>();
 
         @Override
         protected void decode(ChannelHandlerContext ctx, ByteBuf buffer, List<Object> out) throws Exception {
@@ -205,10 +200,17 @@ class Frame {
             int version = buffer.getByte(0);
             // version first bit is the "direction" of the frame (request or response)
             version = version & 0x7F;
-            // the version in the message should match the version this Decoder is configured for.
-            assert version == protocolVersion;
 
-            Object frame = decoderForStreamIdSize.decode(ctx, buffer);
+            DecoderForStreamIdSize decoder = decoderForStreamIdSize.get();
+            if (decoder == null) {
+                decoderForStreamIdSize.compareAndSet(null, new DecoderForStreamIdSize(version, version >= 3 ? 2 : 1));
+                decoder = decoderForStreamIdSize.get();
+            }
+
+            // the version in the message should match the version this Decoder is configured for.
+            assert decoder.protocolVersion == version;
+
+            Object frame = decoder.decode(ctx, buffer);
             if (frame != null)
                 out.add(frame);
         }
@@ -217,10 +219,12 @@ class Frame {
             // The maximum response frame length allowed.  Note that C* does not currently restrict the length of its responses (CASSANDRA-12630).
             private static final int MAX_FRAME_LENGTH = SystemProperties.getInt("com.datastax.driver.NATIVE_TRANSPORT_MAX_FRAME_SIZE_IN_MB", 256) * 1024 * 1024; // 256 MB
             private final int opcodeOffset;
+            private final int protocolVersion;
 
-            DecoderForStreamIdSize(int streamIdSize) {
+            DecoderForStreamIdSize(int protocolVersion, int streamIdSize) {
                 super(MAX_FRAME_LENGTH, /*lengthOffset=*/ 3 + streamIdSize, 4, 0, 0, true);
                 this.opcodeOffset = 2 + streamIdSize;
+                this.protocolVersion = protocolVersion;
             }
 
             @Override
